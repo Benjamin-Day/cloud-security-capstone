@@ -33,7 +33,7 @@ resource "helm_release" "alb_argocd" {
 
   set {
     name  = "port"
-    value = "80"
+    value = "8080"
   }
 
   set {
