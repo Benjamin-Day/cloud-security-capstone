@@ -1,4 +1,7 @@
 # Overview
+
+**Author:** Benjamin Day, 2022
+
 This project explored security best practices for software development pipelines and cloud infrastructure. The objective was to explore and implement security controls throughout the software and infrastructure lifecycle. The cloud environment used to host the application was AWS and Elastic Kubernetes Service. The demo application hosted on the infrastructure is a simple Go API image.
 
 3 individual repositories were used for the project:
