@@ -100,7 +100,7 @@ These checks ensure that security flaws are not introduced into the code base.
 
 Code Security Results            |  Image Security Results
 :-------------------------:|:-------------------------:
-<img src="/images/code-security-results.png" width="30%"> | <img src="/images/image-security-results.png" width="30%">
+<img src="/images/code-security-results.png" width="100%"> | <img src="/images/image-security-results.png" width="100%">
 
 ### Build Pipeline
 This workflow automates the build, versioning, and deployment process for the code. It triggers when code changes are pushed/merged to the main branch.
