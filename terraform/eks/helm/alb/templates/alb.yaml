@@ -1,0 +1,32 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Values.name }}
+  namespace: {{ .Values.namespace }}
+  annotations:
+    alb.ingress.kubernetes.io/certificate-arn: {{ required "A valid value for certificatearn is required!" .Values.certificatearn }}
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS":443}]' # Redirects http to https
+    alb.ingress.kubernetes.io/ssl-redirect: "443" # See above
+    alb.ingress.kubernetes.io/scheme: internet-facing # Deploys to public subnet
+    alb.ingress.kubernetes.io/target-type: ip # Targets IPs of pod in the service
+    alb.ingress.kubernetes.io/group.name: external
+    alb.ingress.kubernetes.io/backend-protocol: HTTP
+    alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
+    alb.ingress.kubernetes.io/security-groups: {{ required "A valid value for securityGroupId is required!" .Values.securityGroupId }}
+    alb.ingress.kubernetes.io/tags: Name=external
+  finalizers:
+    - ingress.k8s.aws/resources
+spec:
+  ingressClassName: alb
+  rules:
+    - host: {{ required "A valid value for example-key is required!" .Values.domain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.service }}
+                port:
+                  number: {{ .Values.port }}
+

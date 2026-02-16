@@ -1,0 +1,55 @@
+global:
+  image:
+    tag: "v2.11.3"
+    
+server:
+  extraArgs:
+    - --insecure
+  config:
+    admin.enabled: false
+
+configs:
+  cm:
+    url: https://argocd.<DOMAIN>
+    dex.config: |
+        logger:
+          level: debug
+          format: json
+        connectors:
+        - type: saml
+          id: aws
+          name: "AWS IAM Identity Center"
+          config:
+            ssoURL: https://portal.sso.us-east-1.amazonaws.com/saml/assertion/<AWS_ACCOUNT_ID_BASE64>
+            ca: /etc/ssl/certs/ca
+            entityIssuer: https://argocd.<DOMAIN>/api/dex/callback
+            redirectURI: https://argocd.<DOMAIN>/api/dex/callback
+            usernameAttr: email
+            emailAttr: email
+            groupsAttr: groups
+  rbac:
+    policy.csv: |
+      g, <IDENTITY_CENTER_GROUP_ID>, role:admin
+      g, <IDENTITY_CENTER_GROUP_ID>, role:readonly-api
+      p, role:readonly-api, projects, get, api/*, allow
+      p, role:readonly-api, applications, get, api/*, allow
+      p, role:readonly-api, applications, sync, api/*, allow
+      p, role:readonly-api, applications, update, api/*, deny
+      p, role:readonly-api, applications, create, api/*, deny
+      p, role:readonly-api, applications, delete, api/*, deny
+      p, role:readonly-api, clusters, *, *, deny
+      p, role:readonly-api, repositories, *, *, deny
+      p, role:readonly-api, certificates, *, *, deny
+      p, role:readonly-api, accounts, *, *, deny
+    scopes: '[groups, email]'
+  # admin.enabled: "false"
+
+dex:
+  volumes:
+    - name: ca-cert
+      secret:
+        secretName: ca-secret
+  volumeMounts:
+    - name: ca-cert
+      mountPath: /etc/ssl/certs/ca
+      subPath: ca

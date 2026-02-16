@@ -1,0 +1,240 @@
+name: API PR Check
+
+on:
+  workflow_dispatch:
+  
+  pull_request:
+    branches:
+      - main
+    paths:
+      - api/**
+
+concurrency:
+  group: ${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  go-version-file: 'api/go.mod'
+
+jobs:
+  code-security-check:
+    name: Code Security Check
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ env.go-version-file }} 
+         # cach-dependency-path: api/go.sum
+
+      - name: Install Gosec
+        run: curl -sfL https://raw.githubusercontent.com/securego/gosec/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.20.0
+
+      - name: Install Go Dependencies & Modules
+        working-directory: api
+        run: |
+          go mod tidy
+          go mod download
+          # PLEASE
+
+      # Do go module/package scanning with govulncheck
+      - name: Run Govulncheck
+        id: govulncheck
+        uses: golang/govulncheck-action@v1
+        with:
+          work-dir: ./api
+          go-version-file: ${{ env.go-version-file }}
+          output-format: text
+          output-file: govulncheck-results
+
+      - name: Run Gosec
+        if: always()
+        id: gosec
+        working-directory: api
+        run: |
+          set -o pipefail
+          gosec . | tee ../gosec-results
+
+      - name: Save Check results
+        if: ${{ always() }}
+        id: save-govulncheck-output
+        run: |
+          GOVULNCHECK_RESULTS=$(cat govulncheck-results)
+          echo "GOVULNCHECK_RESULTS<<EOF" >> $GITHUB_ENV
+          echo "${GOVULNCHECK_RESULTS}" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+  
+          GOSEC_RESULTS=$(cat gosec-results)
+          echo "GOSEC_RESULTS<<EOF" >> $GITHUB_ENV
+          echo "${GOSEC_RESULTS}" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Comment Govulncheck Results on PR
+        uses: actions/github-script@v7
+        if: ${{ always() && github.event_name == 'pull_request' }}
+        env:
+          GOVULNCHECK_RESULTS: "${{ env.GOVULNCHECK_RESULTS }}"
+          GOSEC_RESULTS: "${{ env.GOSEC_RESULTS }}"
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            })
+            const botComment = comments.find(comment => {
+              return comment.user.type === 'Bot' && comment.body.includes('Govulncheck')
+            })
+
+            const output = `
+            # Code Security Check Results
+
+            | Check | Result  |
+            | ----  | ------- |
+            | Govulncheck | \`${{ steps.govulncheck.outcome }}\` |
+            | Gosec | \`${{ steps.gosec.outcome }}\` |
+
+            <details><summary>Govulncheck Results Details</summary>
+
+            \`\`\`\n
+            ${process.env.GOVULNCHECK_RESULTS}
+            \`\`\`
+
+            </details>
+             
+            <details><summary>Gosec Results Details</summary>
+
+            \`\`\`\n
+            ${process.env.GOSEC_RESULTS}
+            \`\`\`
+
+            </details>`
+
+            if (botComment) {
+              github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: output
+              })
+            } else {
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: output
+              })
+            }
+
+
+  image-check:
+    name: Image Security Check
+    runs-on: ubuntu-latest
+    steps:
+
+      - id: docker-setup
+        uses: docker/setup-buildx-action@v2
+
+      # Build docker image
+      - id: docker-build
+        uses: docker/build-push-action@v4
+        with:
+          tags: go-api:latest
+          push: false
+          load: true
+
+      # Perform container vulnerability scanning
+      - name: Grype Scan
+        id: grype-scan 
+        uses: anchore/scan-action@v3
+        with:
+          image: "go-api:latest"
+          fail-build: true
+          severity-cutoff: low
+          output-format: json
+      
+      - name: Get Grype Scan Results
+        id: grype-results
+        if: ${{ always() && github.event_name == 'pull_request' }}
+        run: |
+          GRYPE_RESULTS=$(cat ${{ steps.grype-scan.outputs.json }} | jq -r '.matches[] | { id: .vulnerability.id, severity: .vulnerability.severity, description: .relatedVulnerabilities[].description ?, urls: .vulnerability.urls}' )
+          echo "GRYPE_RESULTS<<EOF" >> $GITHUB_ENV
+          echo "${GRYPE_RESULTS}" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: echo
+        if: ${{ always() && github.event_name == 'pull_request' }}
+        run: |
+          echo "${{ env.GRYPE_RESULTS }}"
+
+      - name: Comment Grype Results on PR
+        uses: actions/github-script@v7
+        if: ${{ always() && github.event_name == 'pull_request' }}
+        env:
+          GRYPE_RESULTS: "${{ env.GRYPE_RESULTS }}"
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            })
+            const botComment = comments.find(comment => {
+              return comment.user.type === 'Bot' && comment.body.includes('Grype')
+            })
+
+            const output = `
+            # Image Scan Results
+
+            | Check | Result  |
+            | ----  | ------- |
+            | Grype | \`${{ steps.grype-scan.outcome }}\` |
+
+            <details><summary>Grype Scan Results Details</summary>
+
+            \`\`\`\n
+            ${process.env.GRYPE_RESULTS}
+            \`\`\`
+
+            </details>`
+
+            if (botComment) {
+              github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: output
+              })
+            } else {
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: output
+              })
+            }
+
+  lint-check:
+    name: Lint Check
+    runs-on: ubuntu-latest
+    steps:
+
+      - id: checkout
+        uses: actions/checkout@v4
+
+      - id: setup-go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ env.go-version-file }} 
+
+      - id: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          working-directory: api

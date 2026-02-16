@@ -1,0 +1,18 @@
+falco:
+  rules:
+    - disable:
+        rule: "*"
+    - enable:
+        rule: Terminal shell in container
+falcosidekick:
+  enabled: true
+  env:
+    - name: SLACK_WEBHOOKURL
+      valueFrom:
+        secretKeyRef:
+          name: falco-slack-webhook
+          key: webhookurl
+  config:
+    slack:
+      webhookurl: "${SLACK_WEBHOOKURL}"
+      outputformat: all

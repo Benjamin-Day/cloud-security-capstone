@@ -1,0 +1,6 @@
+# Default values for argocd-app-of-apps.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+name: 'app-of-apps'
+repourl: git@github.com:<GITOPS_REPO>.git
+path: apps

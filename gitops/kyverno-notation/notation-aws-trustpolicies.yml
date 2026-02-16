@@ -1,0 +1,35 @@
+apiVersion: notation.nirmata.io/v1alpha1
+kind: TrustPolicy
+metadata:
+  name: tp-go-api
+spec:
+  version: '1.0'
+  trustPolicyName: tp-go-api
+  trustPolicies:
+  - name: aws-signer-tp
+    registryScopes:
+    - "<AWS_ACCOUNT_ID>.dkr.ecr.ca-west-1.amazonaws.com/go-api"
+    signatureVerification:
+      level: strict
+    trustStores:
+    - signingAuthority:aws-signer-ts
+    trustedIdentities:
+    - "arn:aws:signer:us-east-1:<AWS_ACCOUNT_ID>:/signing-profiles/capstone_eks"
+# ---
+# apiVersion: notation.nirmata.io/v1alpha1
+# kind: TrustPolicy
+# metadata:
+#   name: tp-test-notation-fail
+# spec:
+#   version: '1.0'
+#   trustPolicyName: tp-test-notation-fail
+#   trustPolicies:
+#   - name: aws-signer-tp
+#     registryScopes:
+#     - "<AWS_ACCOUNT_ID>.dkr.ecr.ca-west-1.amazonaws.com/go-api"
+#     signatureVerification:
+#       level: strict
+#     trustStores:
+#     - signingAuthority:aws-signer-ts-fail
+#     trustedIdentities:
+#     - "arn:aws:signer:us-east-1:<AWS_ACCOUNT_ID>:/signing-profiles/capstone_eks"

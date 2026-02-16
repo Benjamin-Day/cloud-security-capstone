@@ -1,0 +1,46 @@
+name: Terraform Merge
+
+on:
+  push:
+    branches:
+      - 'main'
+    paths:
+      - 'terraform/**'
+
+
+permissions:
+  id-token: write             # Need to be able to modify the token used to connect to aws
+  contents: read              # Need to be able to read the contents of the tf directory
+  pull-requests: write        # Need to be able to write plan and scan results to pull request comments 
+
+env:
+  TF_LOG: INFO                # provides extra logging output from terraform commands
+  TF_INPUT: false             # tells terraform this is a CI environment
+
+  
+jobs:
+  terraform-apply:
+    name: Terraform Apply
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main'}}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./terraform
+    steps:
+
+      - id: aws-token
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: ${{ secrets.AWS_ROLE_SESSION_NAME }}
+          aws-region: us-east-1
+
+      - id: checkout
+        uses: actions/checkout@v4
+
+      - name: tf-init
+        run: terraform init 
+
+      - name: Terraform Apply
+        run: terraform apply -var="aws_account_id=${{ secrets.AWS_ACCOUNT_NUMBER }}" -auto-approve -input=false
+      

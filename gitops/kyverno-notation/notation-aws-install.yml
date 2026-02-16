@@ -1,0 +1,238 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kyverno-notation-aws
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kyverno-notation-aws
+  namespace: kyverno-notation-aws
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::<AWS_ACCOUNT_ID>:role/kyverno-notation-aws
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kyverno-notation-aws-clusterrole
+rules:
+- apiGroups:
+  - notation.nirmata.io
+  resources:
+  - trustpolicies
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - notation.nirmata.io
+  resources:
+  - trustpolicies/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - notation.nirmata.io
+  resources:
+  - truststores
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - notation.nirmata.io
+  resources:
+  - truststores/finalizers
+  verbs:
+  - update
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kyverno-notation-aws-clusterrolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kyverno-notation-aws-clusterrole
+subjects:
+- kind: ServiceAccount
+  name: kyverno-notation-aws
+  namespace: kyverno-notation-aws
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kyverno-notation-aws-token-review-clusterrolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+- kind: ServiceAccount
+  name: kyverno-notation-aws
+  namespace: kyverno-notation-aws
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kyverno-notation-aws-role
+  namespace: kyverno-notation-aws
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - "secrets"
+  - "configmaps"
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - delete
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - delete
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kyverno-notation-aws-rolebinding
+  namespace: kyverno-notation-aws
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kyverno-notation-aws-role
+subjects:
+- kind: ServiceAccount
+  name: kyverno-notation-aws
+  namespace: kyverno-notation-aws
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: kyverno-notation-aws
+  name: kyverno-notation-aws
+  namespace: kyverno-notation-aws
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: kyverno-notation-aws
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: kyverno-notation-aws
+    spec:
+      terminationGracePeriodSeconds: 5
+      securityContext:
+        runAsNonRoot: true
+      containers:
+      - image: ghcr.io/nirmata/kyverno-notation-aws:latest
+        imagePullPolicy: Always
+        name: kyverno-notation-aws
+        args:
+        # NOTATION DEBUGGING
+        - --debug
+
+        # CACHING
+        - --cacheEnabled
+        - --cacheMaxSize=2000
+        - --cacheTTLDurationSeconds=7200
+
+        - --reviewKyvernoToken=false
+        # USE IF IRSA IS NOT CONFIGURED
+        # - --imagePullSecrets=regcred
+        resources:
+          limits:
+            memory: 512Mi
+          requests:
+            memory: 32Mi
+            cpu: 100m
+        securityContext:
+          runAsUser: 2000
+          runAsGroup: 3000
+          allowPrivilegeEscalation: false
+          seccompProfile:
+            type: RuntimeDefault
+          capabilities:
+            drop:
+              - ALL
+        env:
+        - name: NOTATION_DIR
+          value: /notation
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace  
+        - name: SERVICE_NAME
+          value: svc
+        - name: DEPLOYMENT_NAME
+          value: kyverno-notation-aws
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        # USE IF IRSA IS NOT CONFIGURED
+        # - name: AWS_ACCESS_KEY_ID
+        #   value: ${AWS_ACCESS_KEY_ID}
+        # - name: AWS_SECRET_ACCESS_KEY
+        #   value: ${AWS_SECRET_ACCESS_KEY}
+        - name: AWS_REGION
+          value: us-west-2
+        - name: DEFAULT_TRUST_POLICY
+          value: aws-signer-trust-policy
+        volumeMounts:
+          - name: notation
+            mountPath: /notation
+      volumes:
+        - name: notation
+          emptyDir: {}
+      serviceAccountName: kyverno-notation-aws
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: kyverno-notation-aws
+  name: svc
+  namespace: kyverno-notation-aws
+spec:
+  ports:
+  - port: 443
+    name: https
+    protocol: TCP
+    targetPort: 9443
+  selector:
+    app: kyverno-notation-aws
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: notation-plugin-config
+  namespace: kyverno-notation-aws
+data:
+  debug: "false"

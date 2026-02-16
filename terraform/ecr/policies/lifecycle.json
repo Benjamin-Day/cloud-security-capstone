@@ -1,0 +1,17 @@
+{
+  "rules": [
+      {
+          "rulePriority": 1,
+          "description": "Keep last 2 images",
+          "selection": {
+              "tagStatus": "tagged",
+              "tagPatternList": ["v*"],
+              "countType": "imageCountMoreThan",
+              "countNumber": 2
+          },
+          "action": {
+              "type": "expire"
+          }
+      }
+  ]
+}

@@ -1,0 +1,235 @@
+name: Terraform PR Check
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'eks/*'
+
+
+permissions:
+  id-token: write             # Need to be able to modify the token used to connect to aws
+  contents: read              # Need to be able to read the contents of the tf directory
+  pull-requests: write        # Need to be able to write plan and scan restuls to pull request comments 
+
+env:
+  TF_LOG: INFO                # provides extra logging output from terraform commands
+  TF_INPUT: false             # tells terraform this is a CI environment
+
+
+jobs:
+#------------------------------------------------------------------------------------#
+  terraform-security-checks:
+    name: Terraform Security Checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./eks
+    steps:
+
+      - name: Checkout Configuration
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: eks
+
+      - name: Checkov Configuration Scan
+        id: checkov-config-scan
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: eks
+          quiet: true
+          output_format: cli
+          download_external_modules: true # Will download modules that are used by the terraform config and scan those as well
+      
+      - name: Save Checkov Configuration Scan
+        if: always()
+        run: |
+          echo 
+          echo "CONFIG_SCAN_RESULTS<<EOF" >> $GITHUB_ENV
+          echo "${CHECKOV_RESULTS}" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - id: aws-token
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: ${{ secrets.AWS_ROLE_SESSION_NAME }}
+          aws-region: us-east-1
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Generate Plan (JSON)
+        if: ${{ steps.checkov-config-scan.outome == 'success' }}
+        run: |
+          terraform plan -var="aws_account_id=${{ secrets.AWS_ACCOUNT_NUMBER }}" --out tfplan.binary
+          terraform show -json tfplan.binary | jq > tfplan.json
+
+      - name: Checkov Plan Scan
+        id: checkov-plan-scan
+        uses: bridgecrewio/checkov-action@v12
+        if: ${{ steps.checkov-config-scan.outome == 'success' }}
+        with:
+          framework: terraform
+          output_format: cli
+          file: ./terraform/tfplan.json
+
+      - name: Save Checkov Plan Scan
+        if: ${{ always() && steps.checkov-config-scan.outcome == 'success' }}
+        run: |
+          echo "PLAN_SCAN_RESULTS<<EOF" >> $GITHUB_ENV
+          echo "${CHECKOV_RESULTS}" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Comment Security Checks on PR
+        uses: actions/github-script@v7
+        if: ${{ always() && github.event_name == 'pull_request' }}
+        env:
+          CONFIG_SCAN_RESULTS: "${{ env.CONFIG_SCAN_RESULTS }}"
+          PLAN_SCAN_RESULTS: "${{ env.PLAN_SCAN_RESULTS }}"
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            // 1. Retrieve existing bot comments for the PR
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            })
+            const botComment = comments.find(comment => {
+              return comment.user.type === 'Bot' && comment.body.includes('Checkov')
+            })
+
+            // 2. Prepare format of the comment
+            const output = `# Checkov Scan Results
+
+            | Scan | Result |
+            | ---- | ------- |
+            | Configuration     | \`${{ steps.checkov-config-scan.outcome }}\` |
+            | Plan     | \`${{ steps.checkov-plan-scan.outcome }}\` |
+
+            <details><summary>Scan Result Details</summary>
+
+            \`\`\`\n
+            ${process.env.CONFIG_SCAN_RESULTS || process.env.PLAN_SCAN_RESULTS}
+            \`\`\`
+
+            </details>`
+
+            // 3. If we have a comment, update it, otherwise create a new one
+            if (botComment) {
+              github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: output
+              })
+            } else {
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: output
+              })
+            }
+
+
+#------------------------------------------------------------------------------------#
+  terraform-plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./eks
+    steps:
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - id: aws-token
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: ${{ secrets.AWS_ROLE_SESSION_NAME }}
+          aws-region: us-east-1
+
+      - name: Checkout Configuration
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: eks
+
+      - name: Terraform Init 
+        run: terraform init 
+
+      - name: Terraform Format 
+        id: tf-fmt
+        continue-on-error: true
+        run: terraform fmt -check
+        
+      - name: Terraform Validate
+        id: tf-validate
+        continue-on-error: true
+        run: terraform validate
+
+      - name: Terraform Plan
+        id: tf-plan
+        continue-on-error: true
+        run: terraform plan -var="aws_account_id=${{ secrets.AWS_ACCOUNT_NUMBER }}" -out tfplan
+
+      - name: Terraform Plan (No Color)
+        id: tf-plan-no-color
+        run: terraform show -no-color tfplan
+
+      - name: Comment Plan on PR
+        uses: actions/github-script@v7
+        if: ${{ always() && github.event_name == 'pull_request' }}
+        env:
+          PLAN: "terraform\n${{ steps.tf-plan-no-color.outputs.stdout }}"
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            })
+            const botComment = comments.find(comment => {
+              return comment.user.type === 'Bot' && comment.body.includes('Format')
+            })
+
+            const output = `
+            # Terraform Results
+
+            | Stage | Result  |
+            | ----  | ------- |
+            | Format | \`${{ steps.tf-fmt.outcome }}\` |
+            | Validate | \`${{ steps.tf-validate.outcome }}\` |
+            | Plan | \`${{ steps.tf-plan.outcome }}\` |
+
+            <details><summary>Plan Details</summary>
+
+            \`\`\`\n
+            ${process.env.PLAN}
+            \`\`\`
+
+            </details>`
+
+            // 3. If we have a comment, update it, otherwise create a new one
+            if (botComment) {
+              github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: output
+              })
+            } else {
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: output
+              })
+            }
+
+

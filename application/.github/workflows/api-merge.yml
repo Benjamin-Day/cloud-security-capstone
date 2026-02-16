@@ -1,0 +1,126 @@
+# Workflow to build image on merge to main
+name: Image Build and Push
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - api/**
+
+permissions:
+  id-token: write
+  contents: write
+
+jobs:
+  increment-tag:
+    name: Increment Tag
+    runs-on: ubuntu-latest
+    outputs:
+      NextVersion: ${{ steps.update-tag.outputs.NextVersion }}
+    steps:
+
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Get Last Tag and Increment
+        id: update-tag
+        run: |
+          
+          git config --global user.name "${GITHUB_ACTOR}"
+          git config --global user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+
+          LastTag=$(git describe --abbrev=0 --tags)
+          Major=$(echo $LastTag | cut -d'.' -f1 )
+          Minor=$(echo $LastTag | cut -d'.' -f2 )
+          echo "Last: $LastTag, Major: $Major, Minor:$Minor"
+
+          NextMinor=$((Minor + 1))
+          NextVersion="${Major}.${NextMinor}"
+          echo "Next tag: $NextVersion"
+
+          git tag -a $NextVersion -m "Tag for version ${NextVersion}"
+          git push origin tag $NextVersion
+
+          echo "NextVersion=${NextVersion}" >> $GITHUB_OUTPUT
+
+
+  image-push:
+    name: Push Image and Sign
+    needs: increment-tag
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Login to AWS
+        id: aws-token
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ca-west-1
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Setup Docker
+        id: docker-setup
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build and Push to ECR
+        id: docker-build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          tags: ${{ steps.login-ecr.outputs.registry }}/go-api:${{ needs.increment-tag.outputs.NextVersion }}
+          push: true
+          load: true
+          provenance: false
+      
+      - name: Notation Setup
+        run: |
+          curl https://d2hvyiie56hcat.cloudfront.net/linux/amd64/installer/deb/latest/aws-signer-notation-cli_amd64.deb -o notation
+          sudo dpkg -i -E notation
+
+      - name: Sign Image
+        run: |
+          notation sign ${{ secrets.AWS_ACCOUNT_NUMBER }}.dkr.ecr.ca-west-1.amazonaws.com/go-api@${{ steps.docker-build.outputs.digest }} --plugin "com.amazonaws.signer.notation.plugin" --id "${{ secrets.AWS_SIGNER_PROFILE }}" --plugin-config aws-region=us-east-1
+          
+     
+  deploy:
+    name: Deploy New Image
+    needs: 
+      - increment-tag
+      - image-push
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITOPS_TOKEN }}
+          repository: <GITOPS_REPO>
+        
+
+      - name: Install YQ
+        run: |
+          sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq &&\
+          sudo chmod +x /usr/bin/yq
+
+      - name: Change Image Version
+        run: |
+          git config --global user.name "${GITHUB_ACTOR}"
+          git config --global user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+          yq e -i '.spec.template.spec.containers[].image = "${{ secrets.AWS_ACCOUNT_NUMBER }}.dkr.ecr.ca-west-1.amazonaws.com/go-api:${{ needs.increment-tag.outputs.NextVersion }}"' go-api/deployment.yml
+          git add .
+          git commit -m "Update Go API image verison to ${{ needs.increment-tag.outputs.NextVersion }}"
+          git push 
