@@ -36,7 +36,8 @@ This folder contains the definitions for all of the resources needed for a fully
   1.	*AWSManagedRulesCommonRuleSet:*	Blocks common web exploits (SQLi, XSS, bad bots, etc.)
   2.	*AWSManagedRulesLinuxRuleSet:*	Protects against Linux‑specific threats (Nodes & app are Linux-based)
   3.	*AWSManagedRulesKnownBadInputsRuleSet:*	Blocks known malicious payload patterns
-  4.	*AWSManagedRulesAmazonIpReputationList:*	Blocks traffic from IPs with bad reputations
+  4.	*AWSManagedRulesAmazonIpReputationList:*	Blocks traffic from IPs with bad reputations.
+
   The WAF also has a custom rate-limiting rule for DoS/Bot Traffic. Clients allowed to connect to the ArgoCD endpoint are also restricted by an IP whitelist.
 
 <img src="/images/waf.png" width="50%">
@@ -62,7 +63,7 @@ Both the Terraform plan and Checkov results are commented on the PR. The followi
 
 Plan Results          |  Checkov Security Scan Results
 :-------------------------:|:-------------------------:
-<img src="/images/terraform-plan.png" width="30%"> | <img src="images/checkov-security-results.png" width="30%">
+<img src="/images/terraform-plan.png" width="100%"> | <img src="images/checkov-security-results.png" width="100%">
 
 ### Terraform Merge
 This workflow only runs when changes in a PR are merged to main. Merging a PR to main is conditional on the PR having approvals and passing security/linting checks.
